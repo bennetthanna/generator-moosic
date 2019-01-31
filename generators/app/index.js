@@ -39,22 +39,21 @@ const resourceTypePrompts = [
     }
 ];
 
+function getData(fileName) {
+    return new Promise(function(resolve, reject) {
+        fs.readFile(fileName, (err, data) => {
+            err ? reject(err) : resolve(data);
+        });
+    });
+}
+
 let uploadType;
 let keyName;
 let resourceLocation;
+let s3;
 
 module.exports = class extends Generator {
-    promptResourceType() {
-        const done = this.async();
-        return this.prompt(resourceTypePrompts).then(answers => {
-            uploadType = answers.uploadType;
-            keyName = answers.keyName;
-            resourceLocation = answers.resourceLocation;
-            done();
-        });
-    }
-
-    uploadToS3() {
+    assumeRole() {
         const done = this.async();
         const sts = new AWS.STS();
         const assumeRoleParams = {
@@ -71,14 +70,38 @@ module.exports = class extends Generator {
                     secretAccessKey: res.Credentials.SecretAccessKey,
                     sessionToken: res.Credentials.SessionToken
                 };
-                const s3 = new AWS.S3(assumedRoleCredentials);
-                return s3.listObjectsV2({ Bucket: 'bucket-o-luv', MaxKeys: 2 }).promise();
+                s3 = new AWS.S3(assumedRoleCredentials);
+                done();
+            })
+            .catch(err => {
+                console.log(`Whoopsie daisies! Looks like an error occured when trying to assume role: ${err.message}`);
+                process.exit(1);
+            });
+    }
+
+    promptResourceType() {
+        const done = this.async();
+        return this.prompt(resourceTypePrompts).then(answers => {
+            uploadType = answers.uploadType;
+            keyName = answers.keyName;
+            resourceLocation = answers.resourceLocation;
+            done();
+        });
+    }
+
+    uploadToS3() {
+        const done = this.async();
+        
+        getData(resourceLocation)
+            .then(res => {
+                return s3.putObject({ Bucket: 'bucket-o-luv', Key: keyName, Body: res }).promise();
             })
             .then(res => {
                 console.log(res);
             })
             .catch(err => {
-                console.log(err);
+                console.log(`Hold the phone! Looks like an error occured when trying to upload to S3: ${err.message}`);
+                process.exit(1);
             });
     }
 };
