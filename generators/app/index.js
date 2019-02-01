@@ -3,6 +3,15 @@
 const Generator = require('yeoman-generator');
 const fs = require('fs-extra');
 const AWS = require('aws-sdk');
+const _  = require('lodash');
+const glob = require('glob');
+
+const BUCKET = 'bucket-o-moosic';
+
+let uploadType;
+let keyName;
+let resourceLocation;
+let s3;
 
 const resourceTypePrompts = [
     {
@@ -20,21 +29,40 @@ const resourceTypePrompts = [
         name: 'keyName',
         message: 'What would you like it to be named?',
         validate(answer) {
-            if (/^[a-zA-Z0-9]*$/.test(answer)) {
+            if (/^[a-zA-Z0-9-_]*$/.test(answer)) {
                 return true;
             }
-            return 'Name must only contain alphanumeric characters.';
+            return 'Name must only contain alphanumeric characters, dashes, or underscores.';
         }
     },
     {
         type: 'input',
         name: 'resourceLocation',
-        message: 'Where is this located?',
+        message: 'Where is this file located?',
         validate(answer) {
-            if (fs.existsSync(answer)) {
+            const stats = fs.statSync(answer);
+            if (fs.existsSync(answer) && stats.isFile()) {
                 return true;
             }
-            return 'Not found. Enter a valid relative path.'
+            return 'File not found. Enter a valid relative path.'
+        },
+        when(answers) {
+            return answers.uploadType === 'MP3 File';
+        }
+    },
+    {
+        type: 'input',
+        name: 'resourceLocation',
+        message: 'Where is this directory located?',
+        validate(answer) {
+            const stats = fs.statSync(answer);
+            if (fs.existsSync(answer) && stats.isDirectory()) {
+                return true;
+            }
+            return 'Directory not found. Enter a valid relative path.'
+        },
+        when(answers) {
+            return _.includes(['Album', 'Artist'], answers.uploadType);
         }
     }
 ];
@@ -47,10 +75,24 @@ function getData(fileName) {
     });
 }
 
-let uploadType;
-let keyName;
-let resourceLocation;
-let s3;
+function getFiles(location, pattern) {
+    return new Promise(function(resolve, reject) {
+        return glob(location + pattern, (err, matches) => {
+            if (err) {
+                return reject(err);
+            }
+            const files = _.filter(matches, (match) => fs.statSync(match).isFile());
+            return resolve(files);
+        });
+    })
+}
+
+function uploadFile(location, prefix) {
+    return getData(location)
+        .then(res => s3.putObject({ Bucket: BUCKET, Key: prefix, Body: res}).promise())
+        .then(res => res)
+        .catch(err => err);
+}
 
 module.exports = class extends Generator {
     assumeRole() {
@@ -91,17 +133,35 @@ module.exports = class extends Generator {
 
     uploadToS3() {
         const done = this.async();
-        
-        getData(resourceLocation)
-            .then(res => {
-                return s3.putObject({ Bucket: 'bucket-o-luv', Key: keyName, Body: res }).promise();
-            })
-            .then(res => {
-                console.log(res);
-            })
-            .catch(err => {
-                console.log(`Hold the phone! Looks like an error occured when trying to upload to S3: ${err.message}`);
-                process.exit(1);
-            });
+
+        if (uploadType === 'MP3 File') {
+            uploadFile(resourceLocation, keyName)
+                .then(res => {
+                    console.log(res);
+                    done();
+                })
+                .catch(err => {
+                    console.log(`Hold the phone! An error occured when uploading your file: ${err.message}`);
+                    done();
+                });
+        } else {
+            const pattern = uploadType === 'Album' ? '/*' : '/**/*';
+            getFiles(resourceLocation, pattern)
+                .then(files => {
+                    const promises = _.map(files, file => {
+                        const fileName = uploadType === 'Album' ? _.last(file.split('/')) : _.takeRight(file.split('/'), 2).join('/');
+                        return uploadFile(file, `${keyName}/${fileName}`);
+                    });
+                    return Promise.all(promises);
+                })
+                .then(res => {
+                    console.log(res);
+                    done();
+                })
+                .catch(err => {
+                    console.log(`Uh oh spaghettios! Something went wrong when uploading your files: ${err.message}`);
+                    done();
+                });
+        }
     }
 };
