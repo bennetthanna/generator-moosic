@@ -5,7 +5,7 @@ Interactive CLI tool to upload file(s) to S3
 ## Installation
 1. Install repo
 ```
-git clone https://github.com/bennetthanna/Moosic
+git clone https://github.com/bennetthanna/generator-moosic.git
 ```
 
 2. Install packages

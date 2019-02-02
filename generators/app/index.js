@@ -29,7 +29,7 @@ const resourceTypePrompts = [
         name: 'keyName',
         message: 'What would you like it to be named?',
         validate(answer) {
-            if (/^[a-zA-Z0-9-_]*$/.test(answer)) {
+            if (/^[a-zA-Z0-9-_.]*$/.test(answer)) {
                 return true;
             }
             return 'Name must only contain alphanumeric characters, dashes, or underscores.';
@@ -40,8 +40,7 @@ const resourceTypePrompts = [
         name: 'resourceLocation',
         message: 'Where is this file located?',
         validate(answer) {
-            const stats = fs.statSync(answer);
-            if (fs.existsSync(answer) && stats.isFile()) {
+            if (fs.existsSync(answer) && fs.statSync(answer).isFile()) {
                 return true;
             }
             return 'File not found. Enter a valid relative path.'
@@ -55,8 +54,7 @@ const resourceTypePrompts = [
         name: 'resourceLocation',
         message: 'Where is this directory located?',
         validate(answer) {
-            const stats = fs.statSync(answer);
-            if (fs.existsSync(answer) && stats.isDirectory()) {
+            if (fs.existsSync(answer) && fs.statSync(answer).isDirectory()) {
                 return true;
             }
             return 'Directory not found. Enter a valid relative path.'
@@ -99,7 +97,7 @@ module.exports = class extends Generator {
         const done = this.async();
         const sts = new AWS.STS();
         const assumeRoleParams = {
-            RoleArn: 'arn:aws:iam::171578128461:role/full-s3-access',
+            RoleArn: 'arn:aws:iam::171578128461:role/moosic-s3-access',
             RoleSessionName: 'MoosicSession'
         }
 
