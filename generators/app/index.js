@@ -7,12 +7,15 @@ const _  = require('lodash');
 const glob = require('glob');
 
 const BUCKET = 'bucket-o-moosic';
+const TABLE = 'moosic';
 
 let genre;
 let uploadType;
 let keyName;
 let resourceLocation;
 let s3;
+let dynamoDb;
+let moosicFiles;
 
 const moosicPrompts = [
     {
@@ -123,6 +126,7 @@ module.exports = class extends Generator {
                     sessionToken: res.Credentials.SessionToken
                 };
                 s3 = new AWS.S3(assumedRoleCredentials);
+                dynamoDb = new AWS.DynamoDB.DocumentClient(assumedRoleCredentials);
                 done();
             })
             .catch(err => {
@@ -150,6 +154,18 @@ module.exports = class extends Generator {
             uploadFile(resourceLocation, keyName)
                 .then(res => {
                     console.log(res);
+                    const item = {
+                        Song: {
+                            S: keyName
+                        },
+                        Genre: {
+                            S: genre
+                        },
+                        S3Key: {
+                            S: keyName
+                        }
+                    };
+                    console.log(item);
                     done();
                 })
                 .catch(err => {
@@ -160,6 +176,7 @@ module.exports = class extends Generator {
             const pattern = uploadType === 'Album' ? '/*' : '/**/*';
             getFiles(resourceLocation, pattern)
                 .then(files => {
+                    moosicFiles = files;
                     const promises = _.map(files, file => {
                         const fileName = uploadType === 'Album' ? _.last(file.split('/')) : _.takeRight(file.split('/'), 2).join('/');
                         return uploadFile(file, `${keyName}/${fileName}`);
@@ -168,6 +185,13 @@ module.exports = class extends Generator {
                 })
                 .then(res => {
                     console.log(res);
+                    const promises = _.map(moosicFiles, file => {
+                        const fileParts = uploadType === 'Album' ? _.last(file.split('/')) : _.takeRight(file.split('/'), 2);
+                        const item = fileParts.length === 2 ?
+                            { Album: { S: fileParts[0] }, Song: { S: fileParts[1] }, Artist: { S: keyName }, Genre: { S: genre }, S3Key: { S: `${keyName}/${fileParts[0]}/${fileParts[1]}` } } :
+                            { Song: { S: fileParts }, Album: { S: keyName }, Genre: { S: genre },  S3Key: { S: `${keyName}/${fileParts}` } };
+                        console.log(item);
+                    })
                     done();
                 })
                 .catch(err => {
