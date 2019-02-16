@@ -8,28 +8,40 @@ const glob = require('glob');
 
 const BUCKET = 'bucket-o-moosic';
 
+let genre;
 let uploadType;
 let keyName;
 let resourceLocation;
 let s3;
 
-const resourceTypePrompts = [
+const moosicPrompts = [
     {
         type: 'list',
         name: 'uploadType',
         message: 'What kind of upload would you like to perform?',
         choices: [
-            'MP3 File',
+            'Song',
             'Album',
             'Artist'
         ]
     },
     {
         type: 'input',
+        name: 'genre',
+        message: 'What is the genre of this moosic?',
+        validate(answer) {
+            if (/^[a-zA-Z0-9-_.]*$/.test(answer) && answer.trim()) {
+                return true;
+            }
+            return 'Genre must only contain alphanumeric characters, dashes, or underscores.';
+        }
+    },
+    {
+        type: 'input',
         name: 'keyName',
         message: 'What would you like it to be named?',
         validate(answer) {
-            if (/^[a-zA-Z0-9-_.]*$/.test(answer)) {
+            if (/^[a-zA-Z0-9-_.]*$/.test(answer) && answer.trim()) {
                 return true;
             }
             return 'Name must only contain alphanumeric characters, dashes, or underscores.';
@@ -46,7 +58,7 @@ const resourceTypePrompts = [
             return 'File not found. Enter a valid relative path.'
         },
         when(answers) {
-            return answers.uploadType === 'MP3 File';
+            return answers.uploadType === 'Song';
         }
     },
     {
@@ -119,9 +131,10 @@ module.exports = class extends Generator {
             });
     }
 
-    promptResourceType() {
+    promptMoosic() {
         const done = this.async();
-        return this.prompt(resourceTypePrompts).then(answers => {
+        return this.prompt(moosicPrompts).then(answers => {
+            genre = answers.genre;
             uploadType = answers.uploadType;
             keyName = answers.keyName;
             resourceLocation = answers.resourceLocation;
@@ -130,9 +143,10 @@ module.exports = class extends Generator {
     }
 
     uploadToS3() {
+        console.log('Uploading to S3...');
         const done = this.async();
 
-        if (uploadType === 'MP3 File') {
+        if (uploadType === 'Song') {
             uploadFile(resourceLocation, keyName)
                 .then(res => {
                     console.log(res);
