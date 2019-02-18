@@ -58,7 +58,7 @@ const moosicPrompts = [
             if (fs.existsSync(answer) && fs.statSync(answer).isFile()) {
                 return true;
             }
-            return 'File not found. Enter a valid relative path.'
+            return 'File not found. Enter a valid relative path.';
         },
         when(answers) {
             return answers.uploadType === 'Song';
@@ -72,7 +72,7 @@ const moosicPrompts = [
             if (fs.existsSync(answer) && fs.statSync(answer).isDirectory()) {
                 return true;
             }
-            return 'Directory not found. Enter a valid relative path.'
+            return 'Directory not found. Enter a valid relative path.';
         },
         when(answers) {
             return _.includes(['Album', 'Artist'], answers.uploadType);
@@ -100,9 +100,20 @@ function getFiles(location, pattern) {
     })
 }
 
-function uploadFile(location, prefix) {
+function uploadToS3(location, prefix) {
     return getData(location)
         .then(res => s3.putObject({ Bucket: BUCKET, Key: prefix, Body: res}).promise())
+        .then(res => res)
+        .catch(err => err);
+}
+
+function uploadToDynamo(item) {
+    const params = {
+        TableName : TABLE,
+        Item: item
+    };
+
+    return dynamoDb.put(params).promise()
         .then(res => res)
         .catch(err => err);
 }
@@ -110,20 +121,20 @@ function uploadFile(location, prefix) {
 module.exports = class extends Generator {
     assumeRole() {
         const done = this.async();
+
         const sts = new AWS.STS();
         const assumeRoleParams = {
-            RoleArn: 'arn:aws:iam::171578128461:role/moosic-s3-access',
+            RoleArn: 'arn:aws:iam::171578128461:role/moosic-access',
             RoleSessionName: 'MoosicSession'
-        }
+        };
 
-        const assumeRole = sts.assumeRole(assumeRoleParams).promise();
-
-        assumeRole
+        sts.assumeRole(assumeRoleParams).promise()
             .then(res => {
                 const assumedRoleCredentials = {
                     accessKeyId: res.Credentials.AccessKeyId,
                     secretAccessKey: res.Credentials.SecretAccessKey,
-                    sessionToken: res.Credentials.SessionToken
+                    sessionToken: res.Credentials.SessionToken,
+                    region: 'us-east-1'
                 };
                 s3 = new AWS.S3(assumedRoleCredentials);
                 dynamoDb = new AWS.DynamoDB.DocumentClient(assumedRoleCredentials);
@@ -137,6 +148,7 @@ module.exports = class extends Generator {
 
     promptMoosic() {
         const done = this.async();
+
         return this.prompt(moosicPrompts).then(answers => {
             genre = answers.genre;
             uploadType = answers.uploadType;
@@ -146,27 +158,21 @@ module.exports = class extends Generator {
         });
     }
 
-    uploadToS3() {
-        console.log('Uploading to S3...');
+    uploadFiles() {
         const done = this.async();
 
         if (uploadType === 'Song') {
-            uploadFile(resourceLocation, keyName)
+            uploadToS3(resourceLocation, keyName)
+                .then(res => {
+                    const item = {
+                        song: keyName,
+                        genre,
+                        s3Key: keyName
+                    };
+                    return uploadToDynamo(item);
+                })
                 .then(res => {
                     console.log(res);
-                    const item = {
-                        Song: {
-                            S: keyName
-                        },
-                        Genre: {
-                            S: genre
-                        },
-                        S3Key: {
-                            S: keyName
-                        }
-                    };
-                    console.log(item);
-                    done();
                 })
                 .catch(err => {
                     console.log(`Hold the phone! An error occured when uploading your file: ${err.message}`);
@@ -179,7 +185,7 @@ module.exports = class extends Generator {
                     moosicFiles = files;
                     const promises = _.map(files, file => {
                         const fileName = uploadType === 'Album' ? _.last(file.split('/')) : _.takeRight(file.split('/'), 2).join('/');
-                        return uploadFile(file, `${keyName}/${fileName}`);
+                        return uploadToS3(file, `${keyName}/${fileName}`);
                     });
                     return Promise.all(promises);
                 })
@@ -188,10 +194,14 @@ module.exports = class extends Generator {
                     const promises = _.map(moosicFiles, file => {
                         const fileParts = uploadType === 'Album' ? _.last(file.split('/')) : _.takeRight(file.split('/'), 2);
                         const item = fileParts.length === 2 ?
-                            { Album: { S: fileParts[0] }, Song: { S: fileParts[1] }, Artist: { S: keyName }, Genre: { S: genre }, S3Key: { S: `${keyName}/${fileParts[0]}/${fileParts[1]}` } } :
-                            { Song: { S: fileParts }, Album: { S: keyName }, Genre: { S: genre },  S3Key: { S: `${keyName}/${fileParts}` } };
-                        console.log(item);
-                    })
+                            { album: fileParts[0], song: fileParts[1], artist: keyName, genre, s3Key: `${keyName}/${fileParts[0]}/${fileParts[1]}` } :
+                            { song: fileParts, album: keyName, genre,  s3Key: `${keyName}/${fileParts}` };
+                        return uploadToDynamo(item);
+                    });
+                    return Promise.all(promises);
+                })
+                .then(res => {
+                    console.log(res);
                     done();
                 })
                 .catch(err => {

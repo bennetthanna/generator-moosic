@@ -1,6 +1,6 @@
 # Moosic Yeoman Generator
 
-Interactive CLI tool to upload file(s) to S3
+Interactive CLI tool to upload file(s) to S3 and DynamoDB
 
 ## Installation
 1. Install repo
@@ -27,6 +27,6 @@ yo moosic
 
 > When you assume, you make an ass out of u and me
 
-- This tool assumes you have permission to assume the role `moosic-s3-access`
+- This tool assumes you have permission to assume the role `moosic-access`
 - This tool assumes you have correctly set up your AWS credentials
     - Checkout how to do so [here](https://docs.aws.amazon.com/cli/latest/userguide/cli-chap-configure.html)
