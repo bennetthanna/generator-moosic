@@ -7,9 +7,11 @@ const _  = require('lodash');
 const glob = require('glob');
 
 const BUCKET = 'bucket-o-moosic';
-const TABLE = 'moosic';
+const TABLE = 'music';
 
 let genre;
+let artist;
+let album;
 let uploadType;
 let keyName;
 let resourceLocation;
@@ -37,6 +39,34 @@ const moosicPrompts = [
                 return true;
             }
             return 'Genre must only contain alphanumeric characters, dashes, or underscores.';
+        }
+    },
+    {
+        type: 'input',
+        name: 'artist',
+        message: 'What artist sings this moosic?',
+        validate(answer) {
+            if (/^[a-zA-Z0-9-_.]*$/.test(answer) && answer.trim()) {
+                return true;
+            }
+            return 'Artist must only contain alphanumeric characters, dashes, or underscores.';
+        },
+        when(answers) {
+            return _.includes(['Song', 'Album'], answers.uploadType);
+        }
+    },
+    {
+        type: 'input',
+        name: 'album',
+        message: 'What album does this moosic belong to?',
+        validate(answer) {
+            if (/^[a-zA-Z0-9-_.]*$/.test(answer) && answer.trim()) {
+                return true;
+            }
+            return 'Album must only contain alphanumeric characters, dashes, or underscores.';
+        },
+        when(answers) {
+            return answers.uploadType === 'Song';
         }
     },
     {
@@ -97,25 +127,38 @@ function getFiles(location, pattern) {
             const files = _.filter(matches, (match) => fs.statSync(match).isFile());
             return resolve(files);
         });
-    })
+    });
+}
+
+function generateMoosicObject(fileName) {
+    const fileParts = uploadType === 'Album' ? _.last(fileName.split('/')) : _.takeRight(fileName.split('/'), 2);
+    const item = fileParts.length === 2 ?
+        { genre, artist_album_song: `${keyName}/${fileParts[0]}/${fileParts[1]}`, artist: keyName, album: fileParts[0], song: fileParts[1], s3Key: `${genre}/${keyName}/${fileParts[0]}/${fileParts[1]}` } :
+        { genre, artist_album_song: `${artist}/${keyName}/${fileParts}`, artist, album: keyName, song: fileParts, s3Key: `${genre}/${artist}/${keyName}/${fileParts}` };
+    return item;
 }
 
 function uploadToS3(location, prefix) {
-    return getData(location)
-        .then(res => s3.putObject({ Bucket: BUCKET, Key: prefix, Body: res}).promise())
-        .then(res => res)
-        .catch(err => err);
+    return new Promise(function(resolve, reject) {
+        return getData(location)
+            .then(res => s3.putObject({ Bucket: BUCKET, Key: prefix, Body: res }, (err, data) => {
+                if (err) {
+                    return reject(err);
+                }
+                return resolve(data);
+            }));
+    });
 }
 
 function uploadToDynamo(item) {
-    const params = {
-        TableName : TABLE,
-        Item: item
-    };
-
-    return dynamoDb.put(params).promise()
-        .then(res => res)
-        .catch(err => err);
+    return new Promise(function(resolve, reject) {
+        return dynamoDb.batchWrite(item, (err, data) => {
+            if (err) {
+                return reject(err);
+            }
+            return resolve(data);
+        });
+    });
 }
 
 module.exports = class extends Generator {
@@ -151,6 +194,8 @@ module.exports = class extends Generator {
 
         return this.prompt(moosicPrompts).then(answers => {
             genre = answers.genre;
+            artist = answers.artist;
+            album = answers.album;
             uploadType = answers.uploadType;
             keyName = answers.keyName;
             resourceLocation = answers.resourceLocation;
@@ -165,11 +210,15 @@ module.exports = class extends Generator {
             uploadToS3(resourceLocation, keyName)
                 .then(res => {
                     const item = {
-                        song: keyName,
                         genre,
-                        s3Key: keyName
+                        artist_album_song: `${artist}/${album}/${keyName}`,
+                        artist,
+                        album,
+                        song: keyName,
+                        s3Key: `${genre}/${artist}/${album}/${keyName}`
                     };
-                    return uploadToDynamo(item);
+
+                    return dynamoDb.put({ Item: item, TableName: TABLE }).promise();
                 })
                 .then(res => {
                     console.log(res);
@@ -184,21 +233,18 @@ module.exports = class extends Generator {
                 .then(files => {
                     moosicFiles = files;
                     const promises = _.map(files, file => {
-                        const fileName = uploadType === 'Album' ? _.last(file.split('/')) : _.takeRight(file.split('/'), 2).join('/');
-                        return uploadToS3(file, `${keyName}/${fileName}`);
+                        const moosicObject = generateMoosicObject(file);
+                        return uploadToS3(file, moosicObject.s3Key);
                     });
                     return Promise.all(promises);
                 })
                 .then(res => {
                     console.log(res);
                     const promises = _.map(moosicFiles, file => {
-                        const fileParts = uploadType === 'Album' ? _.last(file.split('/')) : _.takeRight(file.split('/'), 2);
-                        const item = fileParts.length === 2 ?
-                            { album: fileParts[0], song: fileParts[1], artist: keyName, genre, s3Key: `${keyName}/${fileParts[0]}/${fileParts[1]}` } :
-                            { song: fileParts, album: keyName, genre,  s3Key: `${keyName}/${fileParts}` };
-                        return uploadToDynamo(item);
+                        const moosicObject = generateMoosicObject(file);
+                        return { PutRequest: { Item: moosicObject } };
                     });
-                    return Promise.all(promises);
+                    return uploadToDynamo({ RequestItems: { 'music': promises } });
                 })
                 .then(res => {
                     console.log(res);
