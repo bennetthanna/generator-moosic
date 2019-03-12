@@ -207,7 +207,7 @@ module.exports = class extends Generator {
         const done = this.async();
 
         if (uploadType === 'Song') {
-            uploadToS3(resourceLocation, keyName)
+            uploadToS3(resourceLocation, `${genre}/${artist}/${album}/${keyName}`)
                 .then(res => {
                     const item = {
                         genre,
